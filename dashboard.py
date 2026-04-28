@@ -442,6 +442,14 @@ st.markdown("""
     #MainMenu { visibility: hidden; }
     footer     { visibility: hidden; }
     header     { visibility: hidden; }
+
+    /* Always keep the sidebar expanded, even after user collapses it */
+    section[data-testid="stSidebar"][aria-expanded="false"] {
+        transform: none !important;
+        min-width: 21.875rem !important;
+        width: 21.875rem !important;
+    }
+    [data-testid="collapsedControl"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -463,6 +471,8 @@ if "inp_fatigue"        not in st.session_state: st.session_state.inp_fatigue = 
 if "wi_hours"           not in st.session_state: st.session_state.wi_hours = 4
 if "wi_deadline"        not in st.session_state: st.session_state.wi_deadline = 5
 if "wi_no_tutor"        not in st.session_state: st.session_state.wi_no_tutor = False
+if "wi_max_classes"     not in st.session_state: st.session_state.wi_max_classes = 5
+if "wi_max_fatigue"     not in st.session_state: st.session_state.wi_max_fatigue = 7
 if "whatif_results"     not in st.session_state: st.session_state.whatif_results = None
 
 
@@ -498,6 +508,89 @@ def _case_body(path, cost, nodes, base_c):
         f'{_delta(cost, base_c)}'
         f'</div>'
     )
+
+def _plan_preview(path):
+    if not path:
+        return f'{_icon("circle-x", 12, "#dc2626")} Infeasible'
+    steps = [ACTION_DESCRIPTIONS.get(a, a) for a, _ in path]
+    mono = "font-family:'JetBrains Mono',monospace;font-size:0.74rem"
+    if len(steps) == 1:
+        return f'<span style="{mono};color:#374151">{steps[0]}</span>'
+    items = "".join(
+        f'<div style="padding:2px 0;color:#374151;{mono}">{i+1}. {s}</div>'
+        for i, s in enumerate(steps)
+    )
+    return (
+        f'<details style="{mono}">'
+        f'<summary style="cursor:pointer;color:#4f46e5;font-weight:600;list-style:none">'
+        f'{steps[0]} <span style="color:#9ca3af;font-weight:400">+{len(steps)-1} more</span>'
+        f'</summary>'
+        f'<div style="margin-top:6px;padding-left:8px;border-left:2px solid #e5e7eb">'
+        f'{items}'
+        f'</div>'
+        f'</details>'
+    )
+
+
+def _render_whatif_table(wr):
+    all_keys = ["baseline", "case1", "case2", "case3"]
+    if "case4" in wr:
+        all_keys += ["case4", "case5"]
+    label_map = {
+        "baseline": "Baseline (no constraints)",
+        "case1": wr["case1"]["label"],
+        "case2": wr["case2"]["label"],
+        "case3": wr["case3"]["label"],
+    }
+    if "case4" in wr:
+        label_map["case4"] = wr["case4"]["label"]
+        label_map["case5"] = wr["case5"]["label"]
+
+    rows_html = ""
+    for key in all_keys:
+        c = wr[key]
+        path, cost, final = c["path"], c["cost"], c.get("final")
+        label = label_map[key]
+        row_bg = "background:#f5f3ff;" if key == "baseline" else ""
+
+        if path is not None and cost is not None:
+            r_after = risk_score(final) if final else None
+            r_color = "#dc2626" if r_after is not None and r_after > RISK_THRESHOLD else "#16a34a"
+            r_str = (
+                f'<span style="color:{r_color};font-weight:600;'
+                f'font-family:\'JetBrains Mono\',monospace">{r_after:.3f}</span>'
+                if r_after is not None else "—"
+            )
+            rows_html += (
+                f"<tr style='{row_bg}'>"
+                f"<td class='td-name'>{label}</td>"
+                f"<td style=\"font-family:'JetBrains Mono',monospace\">{cost:.2f}</td>"
+                f"<td>{r_str}</td>"
+                f"<td style=\"font-family:'JetBrains Mono',monospace\">{len(path)}</td>"
+                f"<td>{_plan_preview(path)}</td>"
+                f"</tr>"
+            )
+        else:
+            rows_html += (
+                f"<tr>"
+                f"<td class='td-name'>{label}</td>"
+                f"<td class='td-muted'>N/A</td>"
+                f"<td class='td-muted'>—</td>"
+                f"<td class='td-muted'>—</td>"
+                f"<td class='td-goal-n'>{_icon('circle-x', 12, '#dc2626')} Infeasible</td>"
+                f"</tr>"
+            )
+
+    st.markdown(f"""
+    <div class="comp-wrap">
+        <table class="comp-table">
+            <thead><tr>
+                <th>Scenario</th><th>Cost</th><th>Risk After</th><th>Steps</th><th>Plan Preview</th>
+            </tr></thead>
+            <tbody>{rows_html}</tbody>
+        </table>
+    </div>""", unsafe_allow_html=True)
+
 
 def render_metric(label, value, color="#111827", icon_name=None):
     ico = f'<span style="opacity:.55">{_icon(icon_name, 12, "#6b7280")}</span>' if icon_name else ""
@@ -629,7 +722,8 @@ with st.sidebar:
             row   = df.iloc[selected_idx]
             start = state_from_row(row)
             name  = row.get("student_name", f"Student {selected_idx+1}")
-            res   = run_all_algorithms(start)
+            with st.spinner(f"Running A* for {name}..."):
+                res = run_all_algorithms(start)
             res["start"] = start
             res["name"]  = name
             st.session_state.results[selected_idx] = res
@@ -637,13 +731,14 @@ with st.sidebar:
             st.rerun()
 
         if run_all_btn:
-            for i, row in df.iterrows():
-                start = state_from_row(row)
-                name  = row.get("student_name", f"Student {i+1}")
-                res   = run_all_algorithms(start)
-                res["start"] = start
-                res["name"]  = name
-                st.session_state.results[i] = res
+            with st.spinner("Running A* for all students..."):
+                for i, row in df.iterrows():
+                    start = state_from_row(row)
+                    name  = row.get("student_name", f"Student {i+1}")
+                    res   = run_all_algorithms(start)
+                    res["start"] = start
+                    res["name"]  = name
+                    st.session_state.results[i] = res
             st.session_state.last_source = "csv"
             st.rerun()
 
@@ -667,7 +762,8 @@ tab_input, tab_plan, tab_plots, tab_compare, tab_whatif_tab = st.tabs([
 ])
 
 # ── TAB 1: STUDENT INPUT ─────────────────────────────────────────────────────
-with tab_input:
+@st.fragment
+def _input_preview():
     col_form, col_preview = st.columns([3, 2], gap="large")
 
     with col_form:
@@ -744,12 +840,6 @@ with tab_input:
             help="Current fatigue: 0.0 = fully rested, 10.0 = exhausted",
         )
 
-        st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
-
-        analyze_clicked = st.button(
-            "Run A* Analysis", type="primary", use_container_width=True,
-        )
-
     # ── Live Risk Preview (right column) ──────────────────────────────────────
     with col_preview:
         preview_state = State(
@@ -810,11 +900,31 @@ with tab_input:
         )
         st.markdown(f'<div class="state-box">{rows_html}</div>', unsafe_allow_html=True)
 
-    # Handle analyze button click
+with tab_input:
+    # Fragment: only sliders + live preview — slider changes rerun only this section
+    _input_preview()
+
+    # Reconstruct state from session state (updated by the fragment's sliders)
+    _preview_state = State(
+        attendance  = st.session_state.inp_attendance / 100,
+        missing     = st.session_state.inp_missing,
+        score       = st.session_state.inp_score,
+        lms         = st.session_state.inp_lms / 100,
+        study_hours = st.session_state.inp_study_hours,
+        days        = st.session_state.inp_days,
+        fatigue     = st.session_state.inp_fatigue,
+    )
+
+    st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+    analyze_clicked = st.button(
+        "Run A* Analysis", type="primary", use_container_width=True,
+    )
+
     if analyze_clicked:
-        manual_res = run_all_algorithms(preview_state)
-        manual_res["start"] = preview_state
-        manual_res["name"]  = inp_name.strip() or "Manual Student"
+        with st.spinner("Running A* analysis — please wait..."):
+            manual_res = run_all_algorithms(_preview_state)
+        manual_res["start"] = _preview_state
+        manual_res["name"]  = st.session_state.inp_name.strip() or "Manual Student"
         st.session_state.results["manual"] = manual_res
         st.session_state.last_source = "manual"
 
@@ -837,97 +947,109 @@ with tab_input:
     )
     st.caption("Simulate how recovery changes under different constraints using the current slider values as the starting point.")
 
-    wi_col1, wi_col2, wi_col3 = st.columns([1, 1, 1])
+    wi_col1, wi_col2, wi_col3, wi_col4 = st.columns(4)
     with wi_col1:
-        wi_hours    = st.number_input("Max study hours",          min_value=1, max_value=20, key="wi_hours")
+        wi_hours       = st.number_input("Max study hours",          min_value=1, max_value=20, key="wi_hours")
     with wi_col2:
-        wi_deadline = st.number_input("Override deadline (days)", min_value=1, max_value=30, key="wi_deadline")
+        wi_deadline    = st.number_input("Override deadline (days)", min_value=1, max_value=30, key="wi_deadline")
     with wi_col3:
-        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-        wi_no_tutor = st.checkbox("Tutor unavailable", key="wi_no_tutor")
+        wi_max_classes = st.number_input("Max classes to attend",    min_value=0, max_value=20, key="wi_max_classes")
+    with wi_col4:
+        wi_max_fatigue = st.number_input("Max fatigue level",        min_value=1, max_value=10, key="wi_max_fatigue")
+    wi_no_tutor = st.checkbox("Tutor unavailable", key="wi_no_tutor")
 
     run_whatif_btn = st.button("Run What-If", use_container_width=True, key="run_whatif_btn")
 
     if run_whatif_btn:
-        so = preview_state
-        po, co, fo, mo = a_star_search(so, ALL_ACTIONS, heuristic, is_goal)
+        with st.spinner("Running What-If scenarios — please wait..."):
+            so = _preview_state
+            po, co, fo, mo = a_star_search(so, ALL_ACTIONS, heuristic, is_goal)
 
-        s1 = State(so.attendance, so.missing, so.score, so.lms,
-                   min(so.study_hours, wi_hours), so.days, so.fatigue)
-        p1, c1x, f1, m1 = a_star_search(s1, ALL_ACTIONS, heuristic, is_goal)
+            # Case 1: cap study hours
+            s1 = State(so.attendance, so.missing, so.score, so.lms,
+                       min(so.study_hours, wi_hours), so.days, so.fatigue)
+            p1, c1x, f1, m1 = a_star_search(s1, ALL_ACTIONS, heuristic, is_goal)
 
-        s2 = State(so.attendance, so.missing, so.score, so.lms,
-                   so.study_hours, wi_deadline, 0)
-        p2, c2x, f2, m2 = a_star_search(s2, ALL_ACTIONS, heuristic, is_goal)
+            # Case 2: override deadline
+            s2 = State(so.attendance, so.missing, so.score, so.lms,
+                       so.study_hours, wi_deadline, 0)
+            p2, c2x, f2, m2 = a_star_search(s2, ALL_ACTIONS, heuristic, is_goal)
 
-        restricted = [a for a in ALL_ACTIONS if a.__name__ != "meet_tutor"] if wi_no_tutor else ALL_ACTIONS
-        p3, c3x, f3, m3 = a_star_search(so, restricted, heuristic, is_goal)
+            # Case 3: no tutor
+            restricted = [a for a in ALL_ACTIONS if a.__name__ != "meet_tutor"] if wi_no_tutor else ALL_ACTIONS
+            p3, c3x, f3, m3 = a_star_search(so, restricted, heuristic, is_goal)
 
-        st.session_state.whatif_results = {
-            "baseline": {"path": po, "cost": co, "nodes": mo["expanded_nodes"]},
-            "case1":    {"path": p1, "cost": c1x, "nodes": m1["expanded_nodes"],
-                         "label": f"Max {wi_hours}h study"},
-            "case2":    {"path": p2, "cost": c2x, "nodes": m2["expanded_nodes"],
-                         "label": f"{wi_deadline}-day deadline"},
-            "case3":    {"path": p3, "cost": c3x, "nodes": m3["expanded_nodes"],
-                         "label": "No tutor" if wi_no_tutor else "With tutor"},
-        }
+            # Case 4: max classes to attend
+            _orig_attend = next(a for a in ALL_ACTIONS if a.__name__ == "attend_class")
+            _att_cap = min(1.0, so.attendance + wi_max_classes * 0.05)
+            def _attend_capped(s, _orig=_orig_attend, _cap=_att_cap):
+                if s.attendance >= _cap:
+                    return None
+                return _orig(s)
+            _attend_capped.__name__ = "attend_class"
+            actions4 = [_attend_capped if a.__name__ == "attend_class" else a for a in ALL_ACTIONS]
+            p4, c4x, f4, m4 = a_star_search(so, actions4, heuristic, is_goal)
+
+            # Case 5: max fatigue — block any action whose result exceeds the threshold
+            def _make_fatigue_capped(actions, max_f):
+                capped = []
+                for act in actions:
+                    def _w(s, _a=act, _mf=max_f):
+                        res = _a(s)
+                        if res is None:
+                            return None
+                        ns, cost = res
+                        return None if ns.fatigue > _mf else (ns, cost)
+                    _w.__name__ = act.__name__
+                    capped.append(_w)
+                return capped
+            actions5 = _make_fatigue_capped(ALL_ACTIONS, wi_max_fatigue)
+            p5, c5x, f5, m5 = a_star_search(so, actions5, heuristic, is_goal)
+
+            st.session_state.whatif_results = {
+                "baseline": {"path": po, "cost": co, "final": fo, "nodes": mo["expanded_nodes"]},
+                "case1":    {"path": p1, "cost": c1x, "final": f1, "nodes": m1["expanded_nodes"],
+                             "label": f"Max {wi_hours}h study"},
+                "case2":    {"path": p2, "cost": c2x, "final": f2, "nodes": m2["expanded_nodes"],
+                             "label": f"{wi_deadline}-day deadline"},
+                "case3":    {"path": p3, "cost": c3x, "final": f3, "nodes": m3["expanded_nodes"],
+                             "label": "No tutor" if wi_no_tutor else "With tutor"},
+                "case4":    {"path": p4, "cost": c4x, "final": f4, "nodes": m4["expanded_nodes"],
+                             "label": f"Max {wi_max_classes} classes"},
+                "case5":    {"path": p5, "cost": c5x, "final": f5, "nodes": m5["expanded_nodes"],
+                             "label": f"Max fatigue {wi_max_fatigue}"},
+            }
 
     wr = st.session_state.whatif_results
     if wr:
-        co   = wr["baseline"]["cost"]
-        po   = wr["baseline"]["path"]
-        c1x  = wr["case1"]["cost"]
-        p1   = wr["case1"]["path"]
-        c2x  = wr["case2"]["cost"]
-        p2   = wr["case2"]["path"]
-        c3x  = wr["case3"]["cost"]
-        p3   = wr["case3"]["path"]
-
-        if po:
-            st.markdown(f"""
-            <div class="wi-card" style="border-left:3px solid #4f46e5">
-                <div class="wi-title">{_icon("bookmark", 14, "#4f46e5")} Baseline (no constraints)</div>
-                <div class="wi-stat">
-                    <span>Cost: <b>{co:.2f}</b></span>
-                    <span>Steps: <b>{len(po)}</b></span>
-                    <span>Nodes: <b>{wr["baseline"]["nodes"]}</b></span>
-                </div>
-            </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="wi-card">
-            <div class="wi-title">{_icon("sliders-horizontal", 14, "#374151")} Case 1 — {wr["case1"]["label"]}</div>
-            {_case_body(p1, c1x, wr["case1"]["nodes"], co)}
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="wi-card">
-            <div class="wi-title">{_icon("clock", 14, "#374151")} Case 2 — {wr["case2"]["label"]}</div>
-            {_case_body(p2, c2x, wr["case2"]["nodes"], co)}
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="wi-card">
-            <div class="wi-title">{_icon("users", 14, "#374151")} Case 3 — {wr["case3"]["label"]}</div>
-            {_case_body(p3, c3x, wr["case3"]["nodes"], co)}
-        </div>""", unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="sec-hdr" style="margin-top:12px">'
+            f'{_icon("git-compare-arrows", 13)} Scenario Comparison</div>',
+            unsafe_allow_html=True,
+        )
+        _render_whatif_table(wr)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="sec-hdr">{_icon("bar-chart-2", 13)} Cost Comparison</div>',
             unsafe_allow_html=True,
         )
-        scenarios  = ["Baseline", wr["case1"]["label"], wr["case2"]["label"], wr["case3"]["label"]]
-        cost_vals  = [co or 0, c1x or 0, c2x or 0, c3x or 0]
-        bar_colors = ["#4f46e5",
-                      "#22c55e" if c1x else "#ef4444",
-                      "#22c55e" if c2x else "#ef4444",
-                      "#22c55e" if c3x else "#ef4444"]
+        _wi_keys = ["baseline", "case1", "case2", "case3"] + (["case4", "case5"] if "case4" in wr else [])
+        _wi_labels = {
+            "baseline": "Baseline",
+            "case1": wr["case1"]["label"], "case2": wr["case2"]["label"],
+            "case3": wr["case3"]["label"],
+            **({} if "case4" not in wr else {
+                "case4": wr["case4"]["label"], "case5": wr["case5"]["label"],
+            }),
+        }
+        wi_scenarios = [_wi_labels[k] for k in _wi_keys]
+        wi_costs     = [wr[k]["cost"] or 0 for k in _wi_keys]
+        wi_colors    = ["#4f46e5"] + ["#22c55e" if wr[k]["cost"] else "#ef4444" for k in _wi_keys[1:]]
         fig_w = go.Figure(go.Bar(
-            x=scenarios, y=cost_vals, marker_color=bar_colors,
+            x=wi_scenarios, y=wi_costs, marker_color=wi_colors,
             marker_line_width=0, opacity=0.88,
-            text=[f"{c:.2f}" if c else "N/A" for c in [co, c1x, c2x, c3x]],
+            text=[f"{c:.2f}" if c else "N/A" for c in wi_costs],
             textposition="outside", textfont=dict(color="#6b7280", size=11),
         ))
         fig_w.update_layout(
@@ -1155,59 +1277,29 @@ with tab_whatif_tab:
             f'<div class="sec-hdr">{_icon("flask-conical", 13)} What-If Results</div>',
             unsafe_allow_html=True,
         )
-        co5  = wr5["baseline"]["cost"]
-        po5  = wr5["baseline"]["path"]
-        c1x5 = wr5["case1"]["cost"]
-        p1x5 = wr5["case1"]["path"]
-        c2x5 = wr5["case2"]["cost"]
-        p2x5 = wr5["case2"]["path"]
-        c3x5 = wr5["case3"]["cost"]
-        p3x5 = wr5["case3"]["path"]
-
-        if po5:
-            st.markdown(f"""
-            <div class="wi-card" style="border-left:3px solid #4f46e5">
-                <div class="wi-title">{_icon("bookmark", 14, "#4f46e5")} Baseline (no constraints)</div>
-                <div class="wi-stat">
-                    <span>Cost: <b>{co5:.2f}</b></span>
-                    <span>Steps: <b>{len(po5)}</b></span>
-                    <span>Nodes: <b>{wr5["baseline"]["nodes"]}</b></span>
-                </div>
-            </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="wi-card">
-            <div class="wi-title">{_icon("sliders-horizontal", 14, "#374151")} Case 1 — {wr5["case1"]["label"]}</div>
-            {_case_body(p1x5, c1x5, wr5["case1"]["nodes"], co5)}
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="wi-card">
-            <div class="wi-title">{_icon("clock", 14, "#374151")} Case 2 — {wr5["case2"]["label"]}</div>
-            {_case_body(p2x5, c2x5, wr5["case2"]["nodes"], co5)}
-        </div>""", unsafe_allow_html=True)
-
-        st.markdown(f"""
-        <div class="wi-card">
-            <div class="wi-title">{_icon("users", 14, "#374151")} Case 3 — {wr5["case3"]["label"]}</div>
-            {_case_body(p3x5, c3x5, wr5["case3"]["nodes"], co5)}
-        </div>""", unsafe_allow_html=True)
+        _render_whatif_table(wr5)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="sec-hdr">{_icon("bar-chart-2", 13)} Cost Comparison</div>',
             unsafe_allow_html=True,
         )
-        scenarios5  = ["Baseline", wr5["case1"]["label"], wr5["case2"]["label"], wr5["case3"]["label"]]
-        cost_vals5  = [co5 or 0, c1x5 or 0, c2x5 or 0, c3x5 or 0]
-        bar_colors5 = ["#4f46e5",
-                       "#22c55e" if c1x5 else "#ef4444",
-                       "#22c55e" if c2x5 else "#ef4444",
-                       "#22c55e" if c3x5 else "#ef4444"]
+        _wi5_keys = ["baseline", "case1", "case2", "case3"] + (["case4", "case5"] if "case4" in wr5 else [])
+        _wi5_labels = {
+            "baseline": "Baseline",
+            "case1": wr5["case1"]["label"], "case2": wr5["case2"]["label"],
+            "case3": wr5["case3"]["label"],
+            **({} if "case4" not in wr5 else {
+                "case4": wr5["case4"]["label"], "case5": wr5["case5"]["label"],
+            }),
+        }
+        wi5_scenarios = [_wi5_labels[k] for k in _wi5_keys]
+        wi5_costs     = [wr5[k]["cost"] or 0 for k in _wi5_keys]
+        wi5_colors    = ["#4f46e5"] + ["#22c55e" if wr5[k]["cost"] else "#ef4444" for k in _wi5_keys[1:]]
         fig_w5 = go.Figure(go.Bar(
-            x=scenarios5, y=cost_vals5, marker_color=bar_colors5,
+            x=wi5_scenarios, y=wi5_costs, marker_color=wi5_colors,
             marker_line_width=0, opacity=0.88,
-            text=[f"{c:.2f}" if c else "N/A" for c in [co5, c1x5, c2x5, c3x5]],
+            text=[f"{c:.2f}" if c else "N/A" for c in wi5_costs],
             textposition="outside", textfont=dict(color="#6b7280", size=11),
         ))
         fig_w5.update_layout(
