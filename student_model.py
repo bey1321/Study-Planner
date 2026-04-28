@@ -224,11 +224,18 @@ def load_students_csv(filepath):
 
 def state_from_row(row):
     """Create a State object from a DataFrame row."""
+    att = float(row['attendance_rate'])
+    lms = float(row['lms_activity'])
+    # Support CSVs that store these as percentages (0–100) instead of fractions (0–1)
+    if att > 1.0:
+        att /= 100.0
+    if lms > 1.0:
+        lms /= 100.0
     return State(
-        attendance=float(row['attendance_rate']),
+        attendance=att,
         missing=int(row['missing_submissions']),
         score=float(row['avg_quiz_score']),
-        lms=float(row['lms_activity']),
+        lms=lms,
         study_hours=float(row['study_hours_per_week']),
         days=float(row['days_to_deadline']),
         fatigue=0,

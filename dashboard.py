@@ -943,35 +943,6 @@ def _input_preview():
         )
         st.markdown(f'<div class="state-box">{rows_html}</div>', unsafe_allow_html=True)
 
-
-with tab_input:
-    # Fragment: only sliders + live preview — slider changes rerun only this section
-    _input_preview()
-
-    # Reconstruct state from session state (updated by the fragment's sliders)
-    _preview_state = State(
-        attendance  = st.session_state.inp_attendance / 100,
-        missing     = st.session_state.inp_missing,
-        score       = st.session_state.inp_score,
-        lms         = st.session_state.inp_lms / 100,
-        study_hours = st.session_state.inp_study_hours,
-        days        = st.session_state.inp_days,
-        fatigue     = st.session_state.inp_fatigue,
-    )
-
-    st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
-    analyze_clicked = st.button(
-        "Run A* Analysis", type="primary", use_container_width=True,
-    )
-
-    if analyze_clicked:
-        with st.spinner("Running A* analysis — please wait..."):
-            manual_res = run_all_algorithms(_preview_state)
-        manual_res["start"] = _preview_state
-        manual_res["name"]  = st.session_state.inp_name.strip() or "Manual Student"
-        st.session_state.results["manual"] = manual_res
-        st.session_state.last_source = "manual"
-
     # Handle button clicks
     if run_one or run_all_btn:
         try:
@@ -981,7 +952,6 @@ with tab_input:
                 if k not in existing:
                     existing[k] = {"path": None, "cost": None, "final": None,
                                    "metrics": {"expanded_nodes": 0, "runtime": 0.0}}
-
 
             if run_all_btn:
                 fresh = run_all_algorithms(preview_state)
@@ -1017,6 +987,35 @@ with tab_input:
         st.info("Student is already below the risk threshold — no recovery plan needed.")
     elif msg == "infeasible":
         st.warning("No recovery plan found. The student may have too few days remaining, or try **Run All** to compare all algorithms.")
+
+
+with tab_input:
+    # Fragment: only sliders + live preview — slider changes rerun only this section
+    _input_preview()
+
+    # Reconstruct state from session state (updated by the fragment's sliders)
+    _preview_state = State(
+        attendance  = st.session_state.inp_attendance / 100,
+        missing     = st.session_state.inp_missing,
+        score       = st.session_state.inp_score,
+        lms         = st.session_state.inp_lms / 100,
+        study_hours = st.session_state.inp_study_hours,
+        days        = st.session_state.inp_days,
+        fatigue     = st.session_state.inp_fatigue,
+    )
+
+    st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+    analyze_clicked = st.button(
+        "Run A* Analysis", type="primary", use_container_width=True,
+    )
+
+    if analyze_clicked:
+        with st.spinner("Running A* analysis — please wait..."):
+            manual_res = run_all_algorithms(_preview_state)
+        manual_res["start"] = _preview_state
+        manual_res["name"]  = st.session_state.inp_name.strip() or "Manual Student"
+        st.session_state.results["manual"] = manual_res
+        st.session_state.last_source = "manual"
 
     # ── What-If Scenarios ─────────────────────────────────────────────────────
     st.markdown('<div class="divider" style="margin-top:24px"></div>', unsafe_allow_html=True)
