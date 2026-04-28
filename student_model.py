@@ -129,6 +129,8 @@ def study_1_hour(s):
     """Study for one hour: improves score and LMS activity. Does not use a day slot."""
     if s.study_hours <= 0:
         return None
+    if s.fatigue >= 10:
+        return None
     new = State(s.attendance, s.missing, min(100, s.score + 4),
                 min(1.0, s.lms + 0.1), s.study_hours - 1, s.days, s.fatigue + 2)
     cost = 1.5 + new.fatigue * 0.3 + _deadline_penalty(new)
@@ -138,6 +140,8 @@ def study_1_hour(s):
 def attend_class(s):
     """Attend a class session: improves attendance and score. Consumes a day slot."""
     if s.attendance >= 1.0:
+        return None
+    if s.days <= 0:
         return None
     new = State(min(1.0, s.attendance + 0.05), s.missing, min(100, s.score + 2),
                 min(1.0, s.lms + 0.1), s.study_hours, s.days - 1, s.fatigue + 1)
@@ -149,6 +153,8 @@ def submit_assignment(s):
     """Submit a missing assignment: reduces missing count. Consumes a day slot."""
     if s.missing <= 0:
         return None
+    if s.days <= 0:
+        return None
     new = State(s.attendance, s.missing - 1, min(100, s.score + 3),
                 min(1.0, s.lms + 0.1), s.study_hours, s.days - 1, s.fatigue + 1)
     cost = 3.0 + new.fatigue * 0.4 + _deadline_penalty(new)
@@ -157,6 +163,10 @@ def submit_assignment(s):
 
 def practice_quiz(s):
     """Practice a quiz: bigger score boost, improves LMS. Does not use a day slot."""
+    if s.score >= 100 and s.lms >= 1.0:
+        return None
+    if s.fatigue >= 10:
+        return None
     new = State(s.attendance, s.missing, min(100, s.score + 6),
                 min(1.0, s.lms + 0.05), max(0, s.study_hours - 1), s.days, s.fatigue + 2)
     cost = 2.0 + new.fatigue * 0.3 + _deadline_penalty(new)
@@ -165,6 +175,10 @@ def practice_quiz(s):
 
 def meet_tutor(s):
     """Meet a tutor: largest score boost, slight attendance lift. Consumes a day slot."""
+    if s.days <= 0:
+        return None
+    if s.fatigue >= 10:
+        return None
     new = State(min(1.0, s.attendance + 0.02), s.missing, min(100, s.score + 8),
                 min(1.0, s.lms + 0.1), max(0, s.study_hours - 1), s.days - 1, s.fatigue + 1)
     cost = 2.5 + new.fatigue * 0.2 + _deadline_penalty(new)
@@ -173,6 +187,10 @@ def meet_tutor(s):
 
 def rest(s):
     """Rest to recover fatigue. Consumes a day slot."""
+    if s.fatigue == 0:
+        return None
+    if s.days <= 0:
+        return None
     new = State(s.attendance, s.missing, min(100, s.score + 1),
                 s.lms, s.study_hours, s.days - 1, max(0, s.fatigue - 3))
     cost = 1.0 + _deadline_penalty(new)
@@ -206,18 +224,11 @@ def load_students_csv(filepath):
 
 def state_from_row(row):
     """Create a State object from a DataFrame row."""
-    attendance = float(row['attendance_rate'])
-    lms        = float(row['lms_activity'])
-    # Accept either decimal (0–1) or percentage (0–100) format
-    if attendance > 1.0:
-        attendance = attendance / 100.0
-    if lms > 1.0:
-        lms = lms / 100.0
     return State(
-        attendance=min(1.0, max(0.0, attendance)),
+        attendance=float(row['attendance_rate']),
         missing=int(row['missing_submissions']),
         score=float(row['avg_quiz_score']),
-        lms=min(1.0, max(0.0, lms)),
+        lms=float(row['lms_activity']),
         study_hours=float(row['study_hours_per_week']),
         days=float(row['days_to_deadline']),
         fatigue=0,

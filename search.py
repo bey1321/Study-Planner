@@ -149,6 +149,8 @@ def greedy_search(start_state, actions, heuristic, is_goal, max_nodes=None):
     """
     Greedy Best-First Search: priority = h(n).
     Fast but not guaranteed to find the optimal path.
+    The heuristic is used only for ordering — no consistency check is performed
+    because Greedy does not guarantee optimality regardless.
 
     Parameters:
         max_nodes : optional int — stops search after this many expansions
@@ -161,10 +163,12 @@ def greedy_search(start_state, actions, heuristic, is_goal, max_nodes=None):
                    max_nodes=max_nodes)
 
 
-def uniform_cost_search(start_state, actions, heuristic, is_goal, max_nodes=None):
+def uniform_cost_search(start_state, actions, _heuristic, is_goal, max_nodes=None):
     """
     Uniform Cost Search: priority = g(n).
-    Optimal but explores more nodes than A* (heuristic is ignored).
+    Optimal but explores more nodes than A* (heuristic is intentionally ignored).
+    The _heuristic parameter is accepted only to keep a uniform call signature
+    with a_star_search and greedy_search.
 
     Parameters:
         max_nodes : optional int — stops search after this many expansions

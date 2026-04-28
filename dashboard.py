@@ -450,7 +450,7 @@ st.markdown("""
         width: 21.875rem !important;
     }
     [data-testid="collapsedControl"] { display: none !important; }
-</style>
+
 """, unsafe_allow_html=True)
 
 
@@ -459,6 +459,7 @@ if "df"                 not in st.session_state: st.session_state.df = None
 if "results"            not in st.session_state: st.session_state.results = {}
 if "last_source"        not in st.session_state: st.session_state.last_source = None
 if "last_selected_idx"  not in st.session_state: st.session_state.last_selected_idx = None
+if "last_run_scope"     not in st.session_state: st.session_state.last_run_scope = None
 # Slider / input defaults (updated when a CSV/sample student is selected)
 if "inp_name"           not in st.session_state: st.session_state.inp_name = "New Student"
 if "inp_attendance"     not in st.session_state: st.session_state.inp_attendance = 60.0
@@ -474,9 +475,24 @@ if "wi_no_tutor"        not in st.session_state: st.session_state.wi_no_tutor = 
 if "wi_max_classes"     not in st.session_state: st.session_state.wi_max_classes = 5
 if "wi_max_fatigue"     not in st.session_state: st.session_state.wi_max_fatigue = 7
 if "whatif_results"     not in st.session_state: st.session_state.whatif_results = None
+if "selected_algo"      not in st.session_state: st.session_state.selected_algo = "A* Search"
 
 
 # ===================== HELPERS =====================
+_ALGO_KEYS = {"A* Search": "astar", "Greedy Best-First": "greedy", "Uniform Cost Search": "ucs"}
+
+def run_single_algorithm(start, algo_name, actions=None):
+    if actions is None:
+        actions = ALL_ACTIONS
+    if algo_name == "A* Search":
+        path, cost, final, met = a_star_search(start, actions, heuristic, is_goal)
+    elif algo_name == "Greedy Best-First":
+        path, cost, final, met = greedy_search(start, actions, heuristic, is_goal)
+    else:
+        path, cost, final, met = uniform_cost_search(start, actions, heuristic, is_goal)
+    return _ALGO_KEYS[algo_name], {"path": path, "cost": cost, "final": final, "metrics": met}
+
+
 def run_all_algorithms(start, actions=None):
     if actions is None:
         actions = ALL_ACTIONS
@@ -654,6 +670,7 @@ with st.sidebar:
         st.session_state.df = generate_sample_data()
         st.session_state.results = {k: v for k, v in st.session_state.results.items() if k == "manual"}
         st.session_state.last_source = None
+        st.session_state.last_run_scope = None
         st.session_state.last_selected_idx = None
         st.rerun()
 
@@ -665,13 +682,15 @@ with st.sidebar:
         if uploaded:
             try:
                 st.session_state.df = load_students_csv(uploaded)
+                st.session_state.results = {k: v for k, v in st.session_state.results.items() if k == "manual"}
+                st.session_state.last_source = None
+                st.session_state.last_run_scope = None
+                st.session_state.last_selected_idx = None
+                st.session_state.show_uploader = False
+                st.rerun()
             except ValueError as e:
                 st.error(f"CSV error: {e}")
-                uploaded = None
-            st.session_state.results = {k: v for k, v in st.session_state.results.items() if k == "manual"}
-            st.session_state.last_selected_idx = None
-            st.session_state.show_uploader = False
-            st.rerun()
+                st.caption("Required columns: attendance_rate, missing_submissions, avg_quiz_score, lms_activity, study_hours_per_week, days_to_deadline")
 
     st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
@@ -715,8 +734,18 @@ with st.sidebar:
         st.markdown('<div class="sb-divider"></div>', unsafe_allow_html=True)
 
         c1, c2 = st.columns(2)
-        with c1: run_sel     = st.button("Run",     use_container_width=True, type="primary")
-        with c2: run_all_btn = st.button("Run All", use_container_width=True)
+        with c1: run_sel     = st.button("Run",     use_container_width=True, type="primary", key="run_selected_dataset")
+        with c2: run_all_btn = st.button("Run All", use_container_width=True, key="run_all_dataset")
+
+        clear_results = st.button("Clear Results", use_container_width=True, key="clear_dataset_results")
+        if clear_results:
+            st.session_state.results = {}
+            st.session_state.last_source = None
+            st.session_state.last_run_scope = None
+            st.session_state.last_selected_idx = None
+            st.session_state.whatif_results = None
+            st.session_state._run_msg = None
+            st.rerun()
 
         if run_sel:
             row   = df.iloc[selected_idx]
@@ -728,6 +757,7 @@ with st.sidebar:
             res["name"]  = name
             st.session_state.results[selected_idx] = res
             st.session_state.last_source = "csv"
+            st.session_state.last_run_scope = "single"
             st.rerun()
 
         if run_all_btn:
@@ -740,6 +770,7 @@ with st.sidebar:
                     res["name"]  = name
                     st.session_state.results[i] = res
             st.session_state.last_source = "csv"
+            st.session_state.last_run_scope = "all"
             st.rerun()
 
 
@@ -840,6 +871,18 @@ def _input_preview():
             help="Current fatigue: 0.0 = fully rested, 10.0 = exhausted",
         )
 
+        st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+
+        algo_choice = st.selectbox(
+            "Algorithm", ["A* Search", "Greedy Best-First", "Uniform Cost Search"],
+            key="algo_choice",
+        )
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            run_one = st.button("Run Selected", type="primary", use_container_width=True, key="run_selected_manual")
+        with col_r2:
+            run_all_btn = st.button("Run All", use_container_width=True, key="run_all_manual")
+
     # ── Live Risk Preview (right column) ──────────────────────────────────────
     with col_preview:
         preview_state = State(
@@ -900,6 +943,7 @@ def _input_preview():
         )
         st.markdown(f'<div class="state-box">{rows_html}</div>', unsafe_allow_html=True)
 
+
 with tab_input:
     # Fragment: only sliders + live preview — slider changes rerun only this section
     _input_preview()
@@ -928,16 +972,51 @@ with tab_input:
         st.session_state.results["manual"] = manual_res
         st.session_state.last_source = "manual"
 
-        if manual_res["astar"]["path"]:
-            st.success(
-                f"Analysis complete for **{manual_res['name']}**. "
-                f"Switch to **Plan Results** to view the recovery plan."
-            )
-        else:
-            st.info(
-                "No recovery plan needed — this student's profile is already below the risk threshold, "
-                "or no valid sequence of actions was found."
-            )
+    # Handle button clicks
+    if run_one or run_all_btn:
+        try:
+            # Preserve existing results, only overwrite what was just run
+            existing = st.session_state.results.get("manual", {})
+            for k in ["astar", "greedy", "ucs"]:
+                if k not in existing:
+                    existing[k] = {"path": None, "cost": None, "final": None,
+                                   "metrics": {"expanded_nodes": 0, "runtime": 0.0}}
+
+
+            if run_all_btn:
+                fresh = run_all_algorithms(preview_state)
+                existing.update(fresh)
+            else:
+                k, res = run_single_algorithm(preview_state, st.session_state.algo_choice)
+                existing[k] = res
+
+            existing["start"] = preview_state
+            existing["name"]  = inp_name.strip() or "Manual Student"
+            st.session_state.results["manual"] = existing
+            st.session_state.last_source = "manual"
+            st.session_state.last_run_scope = "manual"
+
+            _has_path = any(existing[k]["path"] for k in ["astar", "greedy", "ucs"])
+            if _has_path:
+                st.session_state._run_msg = "success"
+            elif is_goal(preview_state):
+                st.session_state._run_msg = "safe"
+            else:
+                st.session_state._run_msg = "infeasible"
+            st.rerun()
+        except Exception as e:
+            import traceback
+            st.error(f"Error: {e}")
+            st.code(traceback.format_exc())
+
+    # Show run result message (persisted across rerun)
+    msg = st.session_state.get("_run_msg")
+    if msg == "success":
+        st.success("Done. Switch to **Plan Results** to view the recovery plan.")
+    elif msg == "safe":
+        st.info("Student is already below the risk threshold — no recovery plan needed.")
+    elif msg == "infeasible":
+        st.warning("No recovery plan found. The student may have too few days remaining, or try **Run All** to compare all algorithms.")
 
     # ── What-If Scenarios ─────────────────────────────────────────────────────
     st.markdown('<div class="divider" style="margin-top:24px"></div>', unsafe_allow_html=True)
@@ -1072,7 +1151,6 @@ elif "manual" in st.session_state.results:
     active_res = st.session_state.results.get("manual")
 
 if active_res:
-    astar = active_res["astar"]
     start = active_res["start"]
     name  = active_res["name"]
 
@@ -1085,55 +1163,105 @@ with tab_plan:
             <div class="empty-icon-wrap">{_icon("list-checks", 24, "#9ca3af")}</div>
             <h3>No results yet</h3>
             <p>Enter student data in <strong>Student Input</strong> and click
-            <strong>Run A* Analysis</strong>, or load a CSV from the sidebar.</p>
+            <strong>Run Selected</strong> or <strong>Run All</strong>.</p>
         </div>""", unsafe_allow_html=True)
-    elif astar["path"] is None:
-        st.error(f"No recovery plan found for **{name}**.")
     else:
-        met = astar["metrics"]
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
-        with c1: render_metric("Risk Before", f"{risk_score(start):.1f}",          "#dc2626", "activity")
-        with c2: render_metric("Risk After",  f"{risk_score(astar['final']):.1f}", "#16a34a", "target")
-        with c3: render_metric("Total Cost",  f"{astar['cost']:.2f}",              "#4f46e5", "route")
-        with c4: render_metric("Steps",       str(len(astar["path"])),             "#374151", "list-checks")
-        with c5: render_metric("Nodes",       str(met["expanded_nodes"]),          "#374151", "cpu")
-        with c6: render_metric("Runtime",     f"{met['runtime']*1000:.1f} ms",     "#374151", "clock")
+        _label_map   = {"astar": "A* Search", "greedy": "Greedy Best-First", "ucs": "Uniform Cost Search"}
+        _algo_colors = {"astar": "#4f46e5",    "greedy": "#f59e0b",           "ucs": "#0891b2"}
+        _ran = [k for k in ["astar", "greedy", "ucs"] if active_res.get(k, {}).get("path") is not None]
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        col_l, col_r = st.columns(2)
-        with col_l: render_state("Starting State", start,          "map-pin")
-        with col_r: render_state("Final State",    astar["final"], "flag")
+        if not _ran:
+            st.warning("No algorithm has produced a result yet. Run one from **Student Input**.")
+        else:
+            # ── Shared starting state ─────────────────────────────────────────
+            render_state("Starting State", start, "map-pin")
+            rs = risk_score(start)
 
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="sec-hdr">{_icon("list-checks", 13)} Recovery Plan Steps</div>',
-            unsafe_allow_html=True,
-        )
-        for i, (act, state) in enumerate(astar["path"], 1):
-            desc = ACTION_DESCRIPTIONS.get(act, act)
-            st.markdown(f"""
-            <div class="step-card">
-                <span class="step-num">{i}</span>
-                <div class="step-body">
-                    <div class="step-action">{desc}</div>
-                    <div class="step-detail">att={state.attendance:.0%} &nbsp;|&nbsp; miss={state.missing} &nbsp;|&nbsp; score={state.score:.0f} &nbsp;|&nbsp; fatigue={state.fatigue:.1f}</div>
-                </div>
-            </div>""", unsafe_allow_html=True)
+            # ── One section per algorithm ─────────────────────────────────────
+            for _k in _ran:
+                _r     = active_res[_k]
+                _met   = _r["metrics"]
+                _color = _algo_colors[_k]
+                _label = _label_map[_k]
+                rf     = risk_score(_r["final"])
 
-        rs, rf = risk_score(start), risk_score(astar["final"])
-        st.markdown(f"""
-        <div class="goal-banner">
-            {_icon("circle-check", 18, "#16a34a")}
-            <span>Goal reached &mdash; risk reduced from
-            <strong style="color:#dc2626">{rs:.3f}</strong> to
-            <strong style="color:#16a34a">{rf:.3f}</strong>
-            in {len(astar["path"])} steps</span>
-        </div>""", unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="sec-hdr" style="margin-top:28px">'
+                    f'<span style="color:{_color};font-size:0.8rem">&#9679;</span>'
+                    f'&nbsp;{_label}</div>',
+                    unsafe_allow_html=True,
+                )
+
+                c1, c2, c3, c4, c5, c6 = st.columns(6)
+                with c1: render_metric("Risk Before", f"{rs:.3f}",                "#dc2626", "activity")
+                with c2: render_metric("Risk After",  f"{rf:.3f}",                "#16a34a", "target")
+                with c3: render_metric("Total Cost",  f"{_r['cost']:.2f}",        _color,    "route")
+                with c4: render_metric("Steps",       str(len(_r["path"])),       "#374151", "list-checks")
+                with c5: render_metric("Nodes",       str(_met["expanded_nodes"]), "#374151", "cpu")
+                with c6: render_metric("Runtime",     f"{_met['runtime']*1000:.1f} ms", "#374151", "clock")
+
+                st.markdown('<div style="height:10px"></div>', unsafe_allow_html=True)
+                render_state("Final State", _r["final"], "flag")
+
+                st.markdown(
+                    f'<div class="sec-hdr" style="margin-top:14px">'
+                    f'{_icon("list-checks", 13)} Recovery Steps</div>',
+                    unsafe_allow_html=True,
+                )
+                for i, (act, state) in enumerate(_r["path"], 1):
+                    desc = ACTION_DESCRIPTIONS.get(act, act)
+                    st.markdown(f"""
+                    <div class="step-card" style="border-left-color:{_color}">
+                        <span class="step-num" style="background:{_color}">{i}</span>
+                        <div class="step-body">
+                            <div class="step-action">{desc}</div>
+                            <div class="step-detail">att={state.attendance:.0%} &nbsp;|&nbsp; miss={state.missing} &nbsp;|&nbsp; score={state.score:.0f} &nbsp;|&nbsp; fatigue={state.fatigue:.1f}</div>
+                        </div>
+                    </div>""", unsafe_allow_html=True)
+
+                st.markdown(f"""
+                <div class="goal-banner">
+                    {_icon("circle-check", 18, "#16a34a")}
+                    <span>Risk reduced from <strong style="color:#dc2626">{rs:.3f}</strong>
+                    to <strong style="color:#16a34a">{rf:.3f}</strong>
+                    in {len(_r["path"])} steps</span>
+                </div>""", unsafe_allow_html=True)
+
+                st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
 
 # ── TAB 3: VISUALIZATIONS ────────────────────────────────────────────────────
 with tab_plots:
-    solved = {k: v for k, v in st.session_state.results.items() if v["astar"]["path"] is not None}
+    def _any_path(v):
+        return any(v.get(k, {}).get("path") is not None for k in ["astar", "greedy", "ucs"])
+    def _best_final(v):
+        candidates = []
+        for k in ["astar", "greedy", "ucs"]:
+            r = v.get(k, {})
+            if r.get("final") is not None and r.get("cost") is not None:
+                candidates.append((r["cost"], r["final"]))
+        if candidates:
+            return min(candidates, key=lambda item: item[0])[1]
+        for k in ["astar", "greedy", "ucs"]:
+            if v.get(k, {}).get("final") is not None:
+                return v[k]["final"]
+        return None
+
+    if st.session_state.last_source == "manual":
+        solved = {
+            "manual": st.session_state.results.get("manual")
+        } if _any_path(st.session_state.results.get("manual", {})) else {}
+    elif st.session_state.last_source == "csv":
+        if st.session_state.last_run_scope == "single" and selected_idx is not None and selected_idx in st.session_state.results:
+            solved = {selected_idx: st.session_state.results[selected_idx]}
+        else:
+            solved = {
+                k: v for k, v in st.session_state.results.items()
+                if isinstance(k, int) and _any_path(v)
+            }
+    else:
+        solved = {k: v for k, v in st.session_state.results.items() if _any_path(v)}
+
     if not solved:
         st.markdown(f"""
         <div class="empty-state">
@@ -1143,38 +1271,85 @@ with tab_plots:
         </div>""", unsafe_allow_html=True)
     else:
         st.markdown(
-            f'<div class="sec-hdr">{_icon("bar-chart-2", 13)} Risk Score — Before vs After</div>',
+            f'<div class="sec-hdr">{_icon("bar-chart-2", 13)} Risk Score Before vs After — Per Algorithm</div>',
             unsafe_allow_html=True,
         )
-        n_list = [solved[k]["name"]                       for k in sorted(solved, key=str)]
-        b_list = [risk_score(solved[k]["start"])          for k in sorted(solved, key=str)]
-        a_list = [risk_score(solved[k]["astar"]["final"]) for k in sorted(solved, key=str)]
+        if active_res and _any_path(active_res):
+            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+            _algo_colors = {"astar": "#4f46e5", "greedy": "#f59e0b", "ucs": "#0891b2"}
+            _algo_labels = {"astar": "A* Search", "greedy": "Greedy Best-First", "ucs": "UCS"}
 
-        fig1 = go.Figure()
-        fig1.add_trace(go.Bar(name="Before", x=n_list, y=b_list,
-            marker_color="#ef4444", marker_line_width=0, opacity=0.82))
-        fig1.add_trace(go.Bar(name="After",  x=n_list, y=a_list,
-            marker_color="#22c55e", marker_line_width=0, opacity=0.82))
-        fig1.add_hline(y=RISK_THRESHOLD, line_dash="dot", line_color="#f59e0b",
-            line_width=1.5,
-            annotation_text=f"Threshold ({RISK_THRESHOLD})",
-            annotation_font_color="#f59e0b", annotation_font_size=11)
-        fig1.update_layout(
-            barmode="group", height=360, **_PLOT,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                bgcolor="rgba(255,255,255,.85)", bordercolor="#e5e7eb", borderwidth=1),
-            xaxis=_ax(), yaxis=_ax("Risk Score"),
-            margin=dict(t=40, b=40, l=50, r=20),
-        )
-        st.plotly_chart(fig1, use_container_width=True, key="fig1_gantt")
+            if st.session_state.last_source == "csv" and st.session_state.last_run_scope == "all":
+                # Dataset-wide per-algorithm graphs
+                for _k, _color in _algo_colors.items():
+                    names = []
+                    before_vals = []
+                    after_vals = []
+                    for key in sorted(solved, key=str):
+                        result = solved[key]
+                        algo = result.get(_k, {})
+                        if algo.get("path") is None:
+                            continue
+                        names.append(result["name"])
+                        before_vals.append(risk_score(result["start"]))
+                        after_vals.append(risk_score(algo["final"]))
 
-        if active_res and active_res["astar"]["path"]:
+                    if not names:
+                        st.markdown(f"<p style='color:#6b7280;margin-bottom:16px;'>No dataset results available for {_algo_labels[_k]}.</p>", unsafe_allow_html=True)
+                        continue
+
+                    fig_algo = go.Figure()
+                    fig_algo.add_trace(go.Bar(name="Before", x=names, y=before_vals, marker_color="#ef4444", marker_line_width=0, opacity=0.82, width=0.25))
+                    fig_algo.add_trace(go.Bar(name="After",  x=names, y=after_vals,  marker_color="#22c55e", marker_line_width=0, opacity=0.82, width=0.25))
+                    fig_algo.add_hline(y=RISK_THRESHOLD, line_dash="dot", line_color="#f59e0b",
+                        line_width=1.5,
+                        annotation_text=f"Threshold ({RISK_THRESHOLD})",
+                        annotation_font_color="#f59e0b", annotation_font_size=11)
+                    fig_algo.update_layout(
+                        title={"text": f"{_algo_labels[_k]} — Before vs After", "x": 0.01, "xanchor": "left"},
+                        height=320, **_PLOT,
+                        barmode="group",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            bgcolor="rgba(255,255,255,.85)", bordercolor="#e5e7eb", borderwidth=1),
+                        xaxis=_ax("Student"), yaxis=_ax("Risk Score"),
+                        margin=dict(t=50, b=40, l=50, r=20),
+                    )
+                    st.plotly_chart(fig_algo, use_container_width=True, key=f"fig_before_after_{_k}")
+            else:
+                # Single result / manual run per-algorithm graph
+                for _k, _color in _algo_colors.items():
+                    _r = active_res.get(_k, {})
+                    if _r.get("path") is None:
+                        st.markdown(f"<p style='color:#6b7280;margin-bottom:16px;'>{_algo_labels[_k]} did not produce a recovery path.</p>", unsafe_allow_html=True)
+                        continue
+
+                    before_risk = risk_score(start)
+                    after_risk = risk_score(_r["final"])
+                    fig_algo = go.Figure()
+                    fig_algo.add_trace(go.Bar(name="Before", x=[_algo_labels[_k]], y=[before_risk], marker_color="#ef4444", marker_line_width=0, opacity=0.82, width=0.4))
+                    fig_algo.add_trace(go.Bar(name="After",  x=[_algo_labels[_k]], y=[after_risk],  marker_color="#22c55e", marker_line_width=0, opacity=0.82, width=0.4))
+                    fig_algo.add_hline(y=RISK_THRESHOLD, line_dash="dot", line_color="#f59e0b",
+                        line_width=1.5,
+                        annotation_text=f"Threshold ({RISK_THRESHOLD})",
+                        annotation_font_color="#f59e0b", annotation_font_size=11)
+                    fig_algo.update_layout(
+                        height=300, **_PLOT,
+                        barmode="group",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            bgcolor="rgba(255,255,255,.85)", bordercolor="#e5e7eb", borderwidth=1),
+                        xaxis=_ax("Algorithm"), yaxis=_ax("Risk Score"),
+                        margin=dict(t=40, b=40, l=50, r=20),
+                    )
+                    st.plotly_chart(fig_algo, use_container_width=True, key=f"fig_before_after_{_k}")
+
+            # ── Action Distribution ───────────────────────────────────────────
+            _best_key = next(k for k in ["astar", "greedy", "ucs"] if active_res.get(k, {}).get("path"))
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
             st.markdown(
-                f'<div class="sec-hdr">{_icon("activity", 13)} Action Distribution — {name}</div>',
+                f'<div class="sec-hdr">{_icon("activity", 13)} Action Distribution — {_algo_labels[_best_key]}</div>',
                 unsafe_allow_html=True,
             )
-            path   = active_res["astar"]["path"]
+            path   = active_res[_best_key]["path"]
             counts = Counter(a for a, _ in path)
             labels = [ACTION_DESCRIPTIONS.get(a, a) for a in counts]
             values = list(counts.values())
@@ -1243,6 +1418,70 @@ with tab_compare:
         </tr></thead>
         <tbody>{rows_html}</tbody>
         </table></div>""", unsafe_allow_html=True)
+
+        # Threshold degradation comparison chart
+        if active_res and _any_path(active_res):
+            _algo_labels = {"astar": "A* Search", "greedy": "Greedy Best-First", "ucs": "UCS"}
+            algo_labels = []
+            before_vals = []
+            after_vals = []
+            for key in ["astar", "greedy", "ucs"]:
+                algo = active_res.get(key, {})
+                if algo.get("path") is None:
+                    continue
+                algo_labels.append(_algo_labels[key])
+                before_vals.append(risk_score(active_res["start"]))
+                after_vals.append(risk_score(algo["final"]))
+
+            if algo_labels:
+                fig_thr = go.Figure()
+                fig_thr.add_trace(go.Bar(name="Before", x=algo_labels, y=before_vals, marker_color="#ef4444", marker_line_width=0, opacity=0.82, width=0.35))
+                fig_thr.add_trace(go.Bar(name="After",  x=algo_labels, y=after_vals,  marker_color="#22c55e", marker_line_width=0, opacity=0.82, width=0.35))
+                fig_thr.add_hline(y=RISK_THRESHOLD, line_dash="dot", line_color="#f59e0b",
+                    line_width=1.5,
+                    annotation_text=f"Threshold ({RISK_THRESHOLD})",
+                    annotation_font_color="#f59e0b", annotation_font_size=11)
+                fig_thr.update_layout(
+                    title={"text": "Threshold Degradation — Before vs After", "x": 0.01, "xanchor": "left", "y": 0.95},
+                    height=360, **_PLOT,
+                    barmode="group",
+                    legend=dict(orientation="h", x=0, xanchor="left", y=-0.18, yanchor="top",
+                        bgcolor="rgba(255,255,255,.85)", bordercolor="#e5e7eb", borderwidth=1),
+                    xaxis=_ax("Algorithm"), yaxis=_ax("Risk Score"),
+                    margin=dict(t=80, b=70, l=50, r=20),
+                )
+                st.plotly_chart(fig_thr, use_container_width=True, key="fig_threshold_degradation")
+
+            # Combined risk progression line chart for all algorithms
+            fig_thr_prog = go.Figure()
+            marker_symbols = {"astar": "circle", "greedy": "square", "ucs": "diamond"}
+            line_styles = {"astar": "solid", "greedy": "dash", "ucs": "dot"}
+            for key, color in [("astar", "#4f46e5"), ("greedy", "#f59e0b"), ("ucs", "#0891b2")]:
+                algo = active_res.get(key, {})
+                if algo.get("path") is None:
+                    continue
+                progression = [risk_score(active_res["start"])] + [risk_score(s) for _, s in algo["path"]]
+                fig_thr_prog.add_trace(go.Scatter(
+                    x=list(range(len(progression))), y=progression,
+                    name=_algo_labels[key], mode="lines+markers",
+                    line=dict(color=color, width=3, dash=line_styles[key]),
+                    marker=dict(size=8, color=color, symbol=marker_symbols[key], line=dict(width=1, color="white")),
+                ))
+            if fig_thr_prog.data:
+                fig_thr_prog.add_hline(y=RISK_THRESHOLD, line_dash="dot", line_color="#f59e0b",
+                    line_width=1.5,
+                    annotation_text=f"Threshold ({RISK_THRESHOLD})",
+                    annotation_font_color="#f59e0b", annotation_font_size=11,
+                    annotation_position="top right")
+                fig_thr_prog.update_layout(
+                    title={"text": "Risk Progression — All Algorithms", "x": 0.01, "xanchor": "left", "y": 0.95},
+                    height=360, **_PLOT,
+                    legend=dict(orientation="h", x=0, xanchor="left", y=-0.18, yanchor="top",
+                        bgcolor="rgba(255,255,255,.85)", bordercolor="#e5e7eb", borderwidth=1),
+                    xaxis=_ax("Step"), yaxis=_ax("Risk Score"),
+                    margin=dict(t=80, b=70, l=50, r=20),
+                )
+                st.plotly_chart(fig_thr_prog, use_container_width=True, key="fig_threshold_progression")
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown(
