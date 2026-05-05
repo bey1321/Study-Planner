@@ -59,7 +59,7 @@ def render_sidebar():
             for i, row in df.iterrows():
                 s    = state_from_row(row)
                 r    = risk_score(s)
-                name = row.get("student_name", f"Student {i+1}")
+                name = row.get("student_name", row.get("student_id", f"Student {i+1}"))
                 tag  = "HIGH" if r > RISK_THRESHOLD else "ok"
                 options.append(f"{name} — {tag} ({r:.1f})")
 
@@ -77,7 +77,7 @@ def render_sidebar():
             if selected_idx != st.session_state.last_selected_idx:
                 row = df.iloc[selected_idx]
                 s   = state_from_row(row)
-                st.session_state.inp_name        = row.get("student_name", f"Student {selected_idx+1}")
+                st.session_state.inp_name        = row.get("student_name", row.get("student_id", f"Student {selected_idx+1}"))
                 st.session_state.inp_attendance  = round(float(s.attendance) * 100, 1)
                 st.session_state.inp_score       = round(float(s.score), 1)
                 st.session_state.inp_missing     = min(10, max(0, int(s.missing)))
@@ -109,7 +109,7 @@ def render_sidebar():
             if run_sel:
                 row   = df.iloc[selected_idx]
                 start = state_from_row(row)
-                name  = row.get("student_name", f"Student {selected_idx+1}")
+                name  = row.get("student_name", row.get("student_id", f"Student {selected_idx+1}"))
                 with st.spinner(f"Running A* for {name}..."):
                     res = run_all_algorithms(start)
                 res["start"] = start
@@ -123,7 +123,7 @@ def render_sidebar():
                 with st.spinner("Running A* for all students..."):
                     for i, row in df.iterrows():
                         start = state_from_row(row)
-                        name  = row.get("student_name", f"Student {i+1}")
+                        name  = row.get("student_name", row.get("student_id", f"Student {i+1}"))
                         res   = run_all_algorithms(start)
                         res["start"] = start
                         res["name"]  = name

@@ -84,7 +84,7 @@ def _search(start_state, actions, is_goal, priority_fn,
             )
             return None, None, None, metrics
 
-        current = parent[current_id][2]
+        current = parent[current_id][2] #retrieve the state object for the current state_id
 
         if is_goal(current):
             runtime = time.time() - start_time

@@ -79,7 +79,7 @@ def is_goal(s):
 
 def heuristic(s):
     """
-    6-component admissible heuristic estimating the minimum remaining cost
+    7-component admissible heuristic estimating the minimum remaining cost
     to reach the goal state.
 
     Each component is a conservative lower-bound of the effort needed:

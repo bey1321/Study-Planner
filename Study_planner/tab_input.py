@@ -151,6 +151,15 @@ def _input_preview():
     # Handle button click — "Run All" dropdown option triggers run_all_algorithms
     if run_one:
         try:
+            if is_goal(preview_state):
+                existing = {"already_safe": True, "start": preview_state,
+                            "name": inp_name.strip() or "Manual Student"}
+                st.session_state.results["manual"] = existing
+                st.session_state.last_source = "manual"
+                st.session_state.last_run_scope = "manual"
+                st.session_state._run_msg = "safe"
+                st.rerun()
+
             existing = st.session_state.results.get("manual", {})
             for k in ["astar", "greedy", "ucs"]:
                 if k not in existing:
@@ -170,7 +179,7 @@ def _input_preview():
             st.session_state.last_source = "manual"
             st.session_state.last_run_scope = "manual"
 
-            _has_path = any(existing[k]["path"] for k in ["astar", "greedy", "ucs"])
+            _has_path = not existing.get("already_safe") and any(existing.get(k, {}).get("path") for k in ["astar", "greedy", "ucs"])
             if _has_path:
                 st.session_state._run_msg = "success"
             elif is_goal(preview_state):

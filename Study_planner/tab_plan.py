@@ -21,6 +21,11 @@ def render_tab_plan(tab, active_res):
             </div>""", unsafe_allow_html=True)
             return
 
+        if active_res.get("already_safe"):
+            st.success(f"**{active_res.get('name', 'This student')}** is not at risk — risk score is already below the threshold. No recovery plan needed.")
+            render_state("Current State", active_res["start"], "map-pin")
+            return
+
         _ran = [k for k in ["astar", "greedy", "ucs"] if active_res.get(k, {}).get("path") is not None]
         if not _ran:
             st.warning("No algorithm has produced a result yet. Run one from **Student Input**.")
